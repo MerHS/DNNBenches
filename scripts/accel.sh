@@ -1,4 +1,4 @@
-python bench.py \
+accelerate launch accel.py \
     --model_name_or_path gpt2 \
     --dataset_name wikitext \
     --dataset_config_name wikitext-2-raw-v1 \
@@ -6,6 +6,6 @@ python bench.py \
     --do_train \
     --fp16 \
     --seed 42 \
-    --preprocessing_num_workers 8 \
+    --logging_dir logs \
     --overwrite_output_dir \
     --output_dir test-clm 

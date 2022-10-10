@@ -10,7 +10,7 @@ Fine-grained benchmark suites for DNN parallelization techniques
 - Dataset: Wikitext-2-raw-v1
 - #GPU: 2
 - Per-device batch size: 4
-- Total Epoch: 3
+- Total epoch: 3
 - Preprocessing Workers: 8
 - Additional params:
   - fp16: True
@@ -28,5 +28,12 @@ Fine-grained benchmark suites for DNN parallelization techniques
 ### DeepSpeed
 
 ### PyTorch-DDP
+
+- `scripts/accel.sh`
+
+| Criterion    | Value               |
+| ------------ | ------------------- |
+| Memory Usage | 15620iB / 15620 MiB |
+| Throughput   | 3.34it/s            |
 
 ### PyTorch-FSDP
