@@ -7,6 +7,15 @@
   },
   "gradient_clipping": 1.0,
   "prescale_gradients": false,
+  "optimizer": {
+    "type": "AdamW",
+    "params": {
+      "lr": 0.001,
+      "betas": [0.8, 0.999],
+      "eps": 1e-8,
+      "weight_decay": 3e-7
+    }
+  },
   "flops_profiler": {
     "enabled": true,
     "profile_step": 30,
