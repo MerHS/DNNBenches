@@ -1,4 +1,4 @@
-accelerate launch resnet-tests/7-hf-gpt.py \
+accelerate launch pytorch-prof/7-hf-gpt.py \
     --model_name_or_path gpt2 \
     --dataset_name wikitext \
     --dataset_config_name wikitext-2-raw-v1 \
