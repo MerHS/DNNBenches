@@ -41,7 +41,7 @@ from tqdm.auto import tqdm
 import transformers
 from accelerate import Accelerator, DistributedType
 from accelerate.logging import get_logger
-from accelerate.utils import set_seed
+from accelerate.utils import DummyOptim, DummyScheduler, set_seed
 from huggingface_hub import Repository
 from transformers import (
     CONFIG_MAPPING,
@@ -238,7 +238,7 @@ def main():
 
     now = datetime.now()
     current_time = now.strftime("%y%m%d-%H%M%S")
-    result_path = f'{os.getcwd()}/result/hf-gpt-pass-{current_time}'
+    result_path = f'{os.getcwd()}/result/hf-gpt-{current_time}'
 
     # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
     # information sent is the one passed as arguments along with your Python/PyTorch versions.
@@ -449,17 +449,13 @@ def main():
     eval_dataset = lm_datasets["validation"]
 
     # Log a few random samples from the training set:
-    for index in random.sample(range(len(train_dataset)), 3):
-        logger.info(f"Sample {index} of the training set: {train_dataset[index]}.")
+    # for index in random.sample(range(len(train_dataset)), 3):
+    #     logger.info(f"Sample {index} of the training set: {train_dataset[index]}.")
 
     # DataLoaders creation:
     train_dataloader = DataLoader(
         train_dataset, shuffle=True, collate_fn=default_data_collator, batch_size=args.per_device_train_batch_size
     )
-    eval_dataloader = DataLoader(
-        eval_dataset, collate_fn=default_data_collator, batch_size=args.per_device_eval_batch_size
-    )
-
     # Optimizer
     # Split weights in two groups, one with weight decay and the other not.
     no_decay = ["bias", "layer_norm.weight"]
@@ -473,7 +469,20 @@ def main():
             "weight_decay": 0.0,
         },
     ]
-    optimizer = torch.optim.AdamW(optimizer_grouped_parameters, lr=args.learning_rate)
+
+    # DeepSpeed intergation
+    optimizer_cls = (
+        torch.optim.AdamW
+        if accelerator.state.deepspeed_plugin is None
+        or "optimizer" not in accelerator.state.deepspeed_plugin.deepspeed_config
+        else DummyOptim
+    )
+    optimizer = optimizer_cls(optimizer_grouped_parameters, lr=args.learning_rate)
+
+    if accelerator.state.deepspeed_plugin is not None:
+        args.gradient_accumulation_steps = accelerator.state.deepspeed_plugin.deepspeed_config[
+            "gradient_accumulation_steps"
+        ]
 
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
@@ -482,16 +491,25 @@ def main():
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
         overrode_max_train_steps = True
 
-    lr_scheduler = get_scheduler(
-        name=args.lr_scheduler_type,
-        optimizer=optimizer,
-        num_warmup_steps=args.num_warmup_steps * args.gradient_accumulation_steps,
-        num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
-    )
+    # Creates Dummy Scheduler if `scheduler` was specified in the config file else creates `args.lr_scheduler_type` Scheduler
+    if (
+        accelerator.state.deepspeed_plugin is None
+        or "scheduler" not in accelerator.state.deepspeed_plugin.deepspeed_config
+    ):
+        lr_scheduler = get_scheduler(
+            name=args.lr_scheduler_type,
+            optimizer=optimizer,
+            num_warmup_steps=args.num_warmup_steps,
+            num_training_steps=args.max_train_steps,
+        )
+    else:
+        lr_scheduler = DummyScheduler(
+            optimizer, total_num_steps=args.max_train_steps, warmup_num_steps=args.num_warmup_steps
+        )
 
     # Prepare everything with our `accelerator`.
-    model, optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.prepare(
-        model, optimizer, train_dataloader, eval_dataloader, lr_scheduler
+    model, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
+        model, optimizer, train_dataloader, lr_scheduler
     )
 
     # On TPU, the tie weights in our model have been disconnected, so we need to restore the ties.
@@ -532,152 +550,41 @@ def main():
     progress_bar = tqdm(range(args.max_train_steps), disable=not accelerator.is_local_main_process)
     completed_steps = 0
     starting_epoch = 0
-
-    # Potentially load in the weights and states from a previous save
-    if args.resume_from_checkpoint:
-        if args.resume_from_checkpoint is not None or args.resume_from_checkpoint != "":
-            accelerator.print(f"Resumed from checkpoint: {args.resume_from_checkpoint}")
-            accelerator.load_state(args.resume_from_checkpoint)
-            path = os.path.basename(args.resume_from_checkpoint)
-        else:
-            # Get the most recent checkpoint
-            dirs = [f.name for f in os.scandir(os.getcwd()) if f.is_dir()]
-            dirs.sort(key=os.path.getctime)
-            path = dirs[-1]  # Sorts folders by date modified, most recent checkpoint is the last
-        # Extract `epoch_{i}` or `step_{i}`
-        training_difference = os.path.splitext(path)[0]
-
-        if "epoch" in training_difference:
-            starting_epoch = int(training_difference.replace("epoch_", "")) + 1
-            resume_step = None
-        else:
-            # need to multiply `gradient_accumulation_steps` to reflect real steps
-            resume_step = int(training_difference.replace("step_", "")) * args.gradient_accumulation_steps
-            starting_epoch = resume_step // len(train_dataloader)
-            resume_step -= starting_epoch * len(train_dataloader)
-
+    
     # update the progress_bar if load from checkpoint
     progress_bar.update(starting_epoch * num_update_steps_per_epoch)
     completed_steps = starting_epoch * num_update_steps_per_epoch
 
-    with torch.profiler.profile(
-        activities=[
-            torch.profiler.ProfilerActivity.CPU,
-            torch.profiler.ProfilerActivity.CUDA],
-        schedule=torch.profiler.schedule(
-            wait=1,
-            warmup=2,
-            active=3),
-        on_trace_ready=torch.profiler.tensorboard_trace_handler(result_path, worker_name='worker0'),
-        record_shapes=True,
-        profile_memory=True,  # This will take 1 to 2 minutes. Setting it to False could greatly speedup.
-        with_stack=True
-    ) as p:
-        for epoch in range(starting_epoch, args.num_train_epochs):
-            model.train()
-            if args.with_tracking:
-                total_loss = 0
-            for step, batch in enumerate(train_dataloader):
-                # We need to skip steps until we reach the resumed step
-                if args.resume_from_checkpoint and epoch == starting_epoch:
-                    if resume_step is not None and step < resume_step:
-                        if step % args.gradient_accumulation_steps == 0:
-                            progress_bar.update(1)
-                            completed_steps += 1
-                        continue
+    for epoch in range(starting_epoch, args.num_train_epochs):
+        model.train()
+        if args.with_tracking:
+            total_loss = 0
+        for step, batch in enumerate(train_dataloader):
+            with accelerator.accumulate(model):
+                outputs = model(**batch)
+                loss = outputs.loss
+                # We keep track of the loss at each epoch
+                if args.with_tracking:
+                    total_loss += loss.detach().float()
+                accelerator.backward(loss)
+                optimizer.step()
+                lr_scheduler.step()
+                optimizer.zero_grad()
 
-                with accelerator.accumulate(model):
-                    outputs = model(**batch)
-                    loss = outputs.loss
-                    # We keep track of the loss at each epoch
-                    if args.with_tracking:
-                        total_loss += loss.detach().float()
-                    accelerator.backward(loss)
-                    optimizer.step()
-                    lr_scheduler.step()
-                    optimizer.zero_grad()
+            # Checks if the accelerator has performed an optimization step behind the scenes
+            if accelerator.sync_gradients:
+                progress_bar.update(1)
+                completed_steps += 1
 
-                # Checks if the accelerator has performed an optimization step behind the scenes
-                if accelerator.sync_gradients:
-                    progress_bar.update(1)
-                    completed_steps += 1
+            if isinstance(checkpointing_steps, int):
+                if completed_steps % checkpointing_steps == 0:
+                    output_dir = f"step_{completed_steps }"
+                    if args.output_dir is not None:
+                        output_dir = os.path.join(args.output_dir, output_dir)
+                    accelerator.save_state(output_dir)
 
-                if isinstance(checkpointing_steps, int):
-                    if completed_steps % checkpointing_steps == 0:
-                        output_dir = f"step_{completed_steps }"
-                        if args.output_dir is not None:
-                            output_dir = os.path.join(args.output_dir, output_dir)
-                        accelerator.save_state(output_dir)
-
-                p.step()
-                if completed_steps >= args.max_train_steps:
-                    break
-
-        # model.eval()
-        # losses = []
-        # for step, batch in enumerate(eval_dataloader):
-        #     with torch.no_grad():
-        #         outputs = model(**batch)
-
-        #     loss = outputs.loss
-        #     losses.append(accelerator.gather_for_metrics(loss.repeat(args.per_device_eval_batch_size)))
-
-        # losses = torch.cat(losses)
-        # try:
-        #     eval_loss = torch.mean(losses)
-        #     perplexity = math.exp(eval_loss)
-        # except OverflowError:
-        #     perplexity = float("inf")
-
-        # logger.info(f"epoch {epoch}: perplexity: {perplexity} eval_loss: {eval_loss}")
-
-        # if args.with_tracking:
-        #     accelerator.log(
-        #         {
-        #             "perplexity": perplexity,
-        #             "eval_loss": eval_loss,
-        #             "train_loss": total_loss.item() / len(train_dataloader),
-        #             "epoch": epoch,
-        #             "step": completed_steps,
-        #         },
-        #         step=completed_steps,
-        #     )
-
-        # if args.push_to_hub and epoch < args.num_train_epochs - 1:
-        #     accelerator.wait_for_everyone()
-        #     unwrapped_model = accelerator.unwrap_model(model)
-        #     unwrapped_model.save_pretrained(
-        #         args.output_dir, is_main_process=accelerator.is_main_process, save_function=accelerator.save
-        #     )
-        #     if accelerator.is_main_process:
-        #         tokenizer.save_pretrained(args.output_dir)
-        #         repo.push_to_hub(
-        #             commit_message=f"Training in progress epoch {epoch}", blocking=False, auto_lfs_prune=True
-        #         )
-
-        # if args.checkpointing_steps == "epoch":
-        #     output_dir = f"epoch_{epoch}"
-        #     if args.output_dir is not None:
-        #         output_dir = os.path.join(args.output_dir, output_dir)
-        #     accelerator.save_state(output_dir)
-
-#     if args.with_tracking:
-#         accelerator.end_training()
-
-#     if args.output_dir is not None:
-#         accelerator.wait_for_everyone()
-#         unwrapped_model = accelerator.unwrap_model(model)
-#         unwrapped_model.save_pretrained(
-#             args.output_dir, is_main_process=accelerator.is_main_process, save_function=accelerator.save
-#         )
-#         if accelerator.is_main_process:
-#             tokenizer.save_pretrained(args.output_dir)
-#             if args.push_to_hub:
-#                 repo.push_to_hub(commit_message="End of training", auto_lfs_prune=True)
-
-#         with open(os.path.join(args.output_dir, "all_results.json"), "w") as f:
-#             json.dump({"perplexity": perplexity}, f)
-# #
+            if completed_steps >= args.max_train_steps:
+                break
 
 if __name__ == "__main__":
     main()
