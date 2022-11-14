@@ -204,12 +204,12 @@ if HAS_PYDOT:
                     if has_leaf:
                         params_label += "params:" + r"\l"
                     for pname, ptensor in named_params:
-                        params_label += node.name + "." + pname + ": " + self._get_tensor_label(ptensor) + r"\n"
+                        params_label += pname + ": " + self._get_tensor_label(ptensor)
 
                     if len(named_bufs) > 0:
-                        params_label += (r"\n" + "|" if has_leaf else "") + "buffers:" + r"\l"
+                        params_label += ("|" if has_leaf else "") + "buffers:" + r"\l"
                     for pname, ptensor in named_bufs:
-                        params_label += node.name + "." + pname + ": " + self._get_tensor_label(ptensor) + r"\n"
+                        params_label += pname + ": " + self._get_tensor_label(ptensor)
                     
                 params_label += "}"
 
