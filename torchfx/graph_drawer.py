@@ -204,12 +204,19 @@ if HAS_PYDOT:
                     if has_leaf:
                         params_label += "params:" + r"\l"
                     for pname, ptensor in named_params:
-                        params_label += pname + ": " + self._get_tensor_label(ptensor)
+                        params_label += f"{pname}: {self._get_tensor_label(ptensor)}"
 
                     if len(named_bufs) > 0:
                         params_label += ("|" if has_leaf else "") + "buffers:" + r"\l"
                     for pname, ptensor in named_bufs:
-                        params_label += pname + ": " + self._get_tensor_label(ptensor)
+                        params_label += f"{pname}: {self._get_tensor_label(ptensor)}"
+
+                    if 'print_meta' in node.meta:
+                        meta = node.meta['print_meta']
+                        if len(meta) > 0:
+                            params_label += ("|" if has_leaf or len(named_bufs) > 0 else "") + "meta:" + r"\l"
+                        for k, v in meta.items():
+                            params_label += f"{k}: {v}\n"
                     
                 params_label += "}"
 
@@ -282,7 +289,7 @@ if HAS_PYDOT:
             return result
 
         def _get_tensor_label(self, t: torch.Tensor) -> str:
-            return str(t.dtype) + str(list(t.shape)) + r"\n"
+            return f"{t.dtype}{str(list(t.shape))}\n"
 
         def _to_dot(
             self,

@@ -1,8 +1,51 @@
+from typing import Any
+
 import torch
 import torch._dynamo as dynamo
 import torch._dynamo.logging
 from functorch.compile import aot_function
 from graph_drawer import FxGraphDrawer
+
+import torch.fx as fx
+from torch.fx.node import Node, _get_qualified_name
+
+def args_str(args):
+    # a debug helper
+    if torch.is_tensor(args):
+        return f"{args.dtype}{str(list(args.shape))}"
+    elif isinstance(args, tuple):
+        return f"tuple({', '.join([args_str(x) for x in args])})"
+    elif isinstance(args, list):
+        return f"list({', '.join([args_str(x) for x in args])})"
+    else:
+        return str(args)
+
+
+def get_leaf_node(module: torch.nn.Module, node: Node) -> torch.nn.Module:
+    py_obj = module
+    assert isinstance(node.target, str)
+    atoms = node.target.split(".")
+    for atom in atoms:
+        if not hasattr(py_obj, atom):
+            raise RuntimeError(f"{str(py_obj)} does not have attribute {atom}!")
+        py_obj = getattr(py_obj, atom)
+    return py_obj
+
+def typename(target: Any) -> str:
+    if isinstance(target, torch.nn.Module):
+        return torch.typename(target)
+    elif isinstance(target, str):
+        return target
+    else:
+        return _get_qualified_name(target)
+
+def node_name(gm: fx.GraphModule, node: Node):
+    if node.op == 'call_module':
+        return typename(get_leaf_node(gm, node))
+    elif node.op == 'call_function':
+        return typename(node.target)
+    else:
+        return ""
 
 def print_graph(model, model_name, args, kwargs):
     def printer(gm: torch.fx.GraphModule, example_inputs):
