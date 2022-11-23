@@ -9,14 +9,17 @@ from graph_drawer import FxGraphDrawer
 import torch.fx as fx
 from torch.fx.node import Node, _get_qualified_name
 
-def args_str(args):
+def args_str(args, newline=True):
+    sep = ',\n' if newline else ', '
     # a debug helper
     if torch.is_tensor(args):
         return f"{args.dtype}{str(list(args.shape))}"
     elif isinstance(args, tuple):
-        return f"tuple({', '.join([args_str(x) for x in args])})"
+        joined = sep.join([args_str(x) for x in args])
+        return f"tuple({joined})"
     elif isinstance(args, list):
-        return f"list({', '.join([args_str(x) for x in args])})"
+        joined = sep.join([args_str(x) for x in args])
+        return f"list({joined})"
     else:
         return str(args)
 

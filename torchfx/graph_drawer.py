@@ -178,7 +178,7 @@ if HAS_PYDOT:
                     arg_strs_list = [a for a in arg_strs_list if "%" not in a]
                 if len(arg_strs_list) == 0:
                     return ""
-                arg_strs = prefix + r",\n".join(arg_strs_list) + suffix
+                arg_strs = prefix + r",".join(arg_strs_list) + suffix
                 return arg_strs.replace("{", r"\{").replace("}", r"\}")
 
 
@@ -214,25 +214,40 @@ if HAS_PYDOT:
                     if 'print_meta' in node.meta:
                         meta = node.meta['print_meta']
                         if len(meta) > 0:
-                            params_label += ("|" if has_leaf or len(named_bufs) > 0 else "") + "meta:" + r"\l"
+                            params_label += ("|" if has_leaf or len(named_bufs) > 0 else "") + "meta:\\l"
                         for k, v in meta.items():
-                            params_label += f"{k}: {v}\n"
+                            if k == 'flops':
+                                # TODO: make bold
+                                params_label += f"{k}: {v}\\n"
+                            else:
+                                params_label += f"{k}: {v}\\n"
+
                     
                 params_label += "}"
 
                 label += extra + params_label + "}"
             else:
-                label += f"|target={self._typename(node.target)}" + r"\n"
+                label += f"|target={self._typename(node.target)}\\n"
                 if len(node.args) > 0:
                     label += _get_str_for_args_kwargs(node.args)
                 if len(node.kwargs) > 0:
                     label += _get_str_for_args_kwargs(node.kwargs)
-                label += f"|num_users={len(node.users)}" + r"\n"
+                label += f"|num_users={len(node.users)}\\n"
+                if 'print_meta' in node.meta:
+                    meta = node.meta['print_meta']
+                    if len(meta) > 0:
+                         label += "|meta:\\l"
+                    for k, v in meta.items():
+                        if k == 'flops':
+                            # TODO: make bold
+                            label += f"{k}: {v}\\n"
+                        else:
+                            label += f"{k}: {v}\\n"
 
             tensor_meta = node.meta.get('tensor_meta')
             label += self._tensor_meta_to_label(tensor_meta)
 
-            return label + "}"
+            return f"{label}}}"
 
         def _tensor_meta_to_label(self, tm) -> str:
             if tm is None:
