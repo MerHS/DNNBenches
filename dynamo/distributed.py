@@ -1,3 +1,4 @@
+import tempfile
 import argparse
 from functools import partial
 import logging
@@ -12,6 +13,7 @@ import torch.utils._pytree as pytree
 from torch._dynamo.testing import reduce_to_scalar_loss
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.profiler import profile, ProfilerActivity, record_function
+from torch.distributed import rpc
 
 try:
     from .common import timed
@@ -34,7 +36,25 @@ def profile_model(args, model, inputs, rank):
 
 
 def run_model(args, model, inputs, rank, world_size, key, result_q):
-    setup(rank, world_size)
+    if args.pipe:
+        # tmpfile = tempfile.NamedTemporaryFile()
+        # rpc.init_rpc(
+        #     name="worker",
+        #     rank=0,
+        #     world_size=2,
+        #     rpc_backend_options=rpc.TensorPipeRpcBackendOptions(
+        #         init_method="file://{}".format(tmpfile.name),
+        #         # Specifying _transports and _channels is a workaround and we no longer
+        #         # will have to specify _transports and _channels for PyTorch
+        #         # versions >= 1.8.1
+        #         _transports=["ibv", "uv"],
+        #         _channels=["cuda_ipc", "cuda_basic"],
+        #     )
+        # )
+        pass
+    else:
+        setup(rank, world_size)
+
     if args.device == "cuda":
         # needed for FSDP
         torch.cuda.set_device(rank)
@@ -68,6 +88,8 @@ def run_model(args, model, inputs, rank, world_size, key, result_q):
             dynamo.config.log_level = logging.INFO
         if args.dynamo_optimize_ddp:
             dynamo.config.optimize_ddp = True
+        if args.pipe:
+            dynamo.config.optimize_pipe = True
 
         def print_compile(gm, ex):
             print(
@@ -94,8 +116,8 @@ def run_model(args, model, inputs, rank, world_size, key, result_q):
     if args.profile:
         profile_model(args, model, inputs, rank)
 
-    cleanup()
-
+    if not args.pipe:
+        cleanup()
 
 def experiment(fn, key, world_size, results):
     key = f"{key}_{world_size}"
@@ -152,6 +174,7 @@ if __name__ == "__main__":
 
     dist_arg = parser.add_mutually_exclusive_group()
     dist_arg.add_argument("--ddp", action="store_true")
+    dist_arg.add_argument("--pipe", action="store_true")
     dist_arg.add_argument("--fsdp", action="store_true")
 
     model_arg = parser.add_mutually_exclusive_group(required=True)
