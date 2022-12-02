@@ -70,7 +70,7 @@ def print_aot(model, model_name, args, kwargs):
 
     def print_forward(gm: torch.fx.GraphModule, example_inputs):
         print("print forward aot graph")
-        draw = FxGraphDrawer(gm, "gpt2")
+        draw = FxGraphDrawer(gm, model_name)
         dot = draw.get_dot_graph()
         with open(f"{model_name}_aot_forward.svg", "wb") as f:
             f.write(dot.create_svg())
@@ -78,7 +78,7 @@ def print_aot(model, model_name, args, kwargs):
 
     def print_backward(gm: torch.fx.GraphModule, example_inputs):
         print("print backward aot graph")
-        draw = FxGraphDrawer(gm, "gpt2")
+        draw = FxGraphDrawer(gm, model_name)
         dot = draw.get_dot_graph()
         with open(f"{model_name}_aot_backward.svg", "wb") as f:
             f.write(dot.create_svg())

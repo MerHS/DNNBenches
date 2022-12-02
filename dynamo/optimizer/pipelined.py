@@ -8,11 +8,13 @@ from torch import fx
 from torch.fx.node import Node
 # from torch.distributed.pipeline.sync import Pipe
 
+from torch._dynamo.optimizations import BACKENDS
 from .distributed import Bucket
-
+from torch._inductor.compile_fx import compile_fx
 
 log = logging.getLogger(__name__)
 
+PIPE_BACKEND = ['inductor']
 
 class PipelineOptimizer:
     """
@@ -106,7 +108,7 @@ class PipelineOptimizer:
                 # only print the submod graphs, not their children
                 debug_str += f"\n---{name} graph---\n{module.graph}\n"
         debug_str += "\n---------------\n"
-        log.info(debug_str)
+        print(debug_str)
 
         # pipelined modules
         submodules = []
@@ -116,6 +118,7 @@ class PipelineOptimizer:
             def __init__(self, module, compiler):
                 super().__init__(module)
                 self.compiler = compiler
+                self.submodule_idx = 0
 
             def compile_submod(self, submod, args, kwargs):
                 """
@@ -157,6 +160,8 @@ class PipelineOptimizer:
 
             def run_node(self, n: Node) -> Any:
                 with fx_traceback.append_stack_trace(n.stack_trace):
+                    # TODO: 
+
                     args, kwargs = self.fetch_args_kwargs_from_env(n)
                     assert isinstance(args, tuple)
                     assert isinstance(kwargs, dict)
@@ -165,14 +170,38 @@ class PipelineOptimizer:
                     # maybe this isn't sound in general, but only changing the target of a node might be ok?
                     if n.op == "call_module":
                         submod = self.fetch_attr(n.target)
+                        idx = self.submodule_idx
+                        device = f'cuda:{idx}'
                         # log.debug(f"\n---{n.target} graph---\n" + str(submod.graph))
                         compiled_submod = self.compile_submod(submod, args, kwargs)
-
+                        
                         submodules.append(compiled_submod)
 
                         self.module.delete_submodule(n.target)
                         n.target = "compiled_" + n.target
                         self.module.add_submodule(n.target, compiled_submod)
+
+                        # TODO: prepend nodes of .to('cuda:n') for every args & kwargs
+                        new_args = []
+                        for arg in n.args:
+                            new_arg = arg
+                            if isinstance(arg, Node):
+                                # TODO: check arg is raw tensor
+                                new_arg = Node(arg.graph, f'{arg.name}_moved', 'call_method', 'to', (arg, device), dict())
+                                n.prepend(new_arg)
+                            new_args.append(new_arg)
+                        n.args = tuple(new_args)
+
+                        self.submodule_idx += 1
+                        
+                    # if n.op == 'call_function' and n.name not in self.names:
+                    #     # insert no-op identity function
+                    #     origin_name = n.name
+                    #     self.names.add(origin_name)
+                    #     n.name = f'temp_{n.name}'
+                    #     n.append(Node(n.graph, origin_name, 'call_function', lambda x: x, (n, ), dict()))
+                    #     print(n.target, type(n.target))
+                    #     print(n.args[0], type(n.args[0]), n.args[0] == self.last_submodule)
                     # then we execute the modified node using the usual logic
                     return getattr(self, n.op)(n.target, args, kwargs)
 
@@ -180,33 +209,49 @@ class PipelineOptimizer:
         submod_compiler.run(*example_inputs)
         split_gm.recompile()
 
-        log.debug("\n---final graph---\n" + str(split_gm.graph) + "\n---------------\n")
+        for i, submod in enumerate(submodules):
+            submod.to(f'cuda:{i}')
 
-        cuda_modules = []
-        for i, mod in enumerate(submodules):
-            cuda_modules.append(mod.to(f"cuda:{i}"))
+        # log.debug("\n---final graph---\n" + str(split_gm.graph) + "\n---------------\n")
 
-        log.info(f'modules cnt: {len(cuda_modules)}')
+        # cuda_modules = []
+        # for i, mod in enumerate(submodules):
+        #     cuda_modules.append(mod.to(f"cuda:{i}"))
 
-        class ReturnToZero(torch.nn.Module):
-            def __init__(self, mod1, mod2):
-                super().__init__()
-                self.mod1 = mod1
-                self.mod2 = mod2
+        # log.info(f'modules cnt: {len(cuda_modules)}')
+
+        # class ReturnToZero(torch.fx.GraphModule):
+        #     def __init__(self, gm, mod1, mod2):
+        #         super().__init__(gm, gm.graph)
+        #         self.mod1 = mod1
+        #         self.mod2 = mod2
             
-            def forward(self, *args, **kwargs):
-                # x = self.submodule(*args, **kwargs)
-                # return x.local_value().to(f"cuda:0")
-                print("args z: ", args)
-                print("kwargs z:", kwargs)
-                x = self.mod1(*args, **kwargs)
-                x = x.to("cuda:1")
-                x = self.mod2(x)
-                return x.to("cuda:0")
+        #     def forward(self, *args, **kwargs):
+        #         # x = self.submodule(*args, **kwargs)
+        #         # return x.local_value().to(f"cuda:0")
+        #         print("args z: ", args)
+        #         print("kwargs z:", kwargs)
+        #         x = self.mod1(*args, **kwargs)
+        #         x = x.to("cuda:1")
+        #         x = self.mod2(x)
+        #         return (x.to("cuda:0"), )
 
-        # TODO: set chunks from config        
-        # pipe = Pipe(torch.nn.Sequential(*cuda_modules), chunks = 4)
-        # zero = ReturnToZero(pipe)
-        zero = ReturnToZero(*cuda_modules)
+        # # TODO: set chunks from config        
+        # # pipe = Pipe(torch.nn.Sequential(*cuda_modules), chunks = 4)
+        # # zero = ReturnToZero(pipe)
+        # print("make zero")
+        # zero = ReturnToZero(split_gm, *cuda_modules)
+        # return zero.forward
 
-        return zero
+        print("\n---final graph---\n" + str(split_gm.graph) + "\n---------------\n")
+
+        return split_gm
+
+def pipeline_compiler(gm: torch.fx.GraphModule, example_inputs: List[torch.Tensor]):
+    backend = PIPE_BACKEND[0]
+    if backend == 'inductor':
+        backend = compile_fx
+    else:
+        backend = BACKENDS[backend]
+    opt = PipelineOptimizer(backend)
+    return opt.compile_fn(gm, example_inputs)
