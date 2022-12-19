@@ -18,17 +18,9 @@ except ImportError:
     from dist_util import apply_fsdp, cleanup, get_model, model_iter_fn, setup
 
 from optimizer.pipelined import pipeline_compiler, PIPE_BACKEND
-from torch.optim import Adam
 
 log = logging.getLogger("dist_benchmark")
 
-class DummyOptimizer():
-    def __init__(self, *args, **kwargs):
-        pass
-    def zero_grad(self):
-        pass
-    def step(self):
-        pass
 
 def torchviz_model(args, model, inputs, rank):
     from torchviz import make_dot
@@ -116,14 +108,10 @@ def run_model(args, model, inputs, key):
         )
         model = dynamo_ctx(model)
 
-    # optimizer = Adam(model.parameters(), lr = 0.001)
-    optimizer = DummyOptimizer()
-    model.train()
-
     # warmup
-    _ = timed(model, model_iter_fn, optimizer, inputs, times=3, return_result=False)
+    _ = timed(model, model_iter_fn, inputs, times=3, return_result=False)
     t_total = timed(
-        model, model_iter_fn, optimizer, inputs, times=args.repeat, return_result=False
+        model, model_iter_fn, inputs, times=args.repeat, return_result=False
     )
     if args.torchviz:
         torchviz_model(args, model, inputs, rank)
@@ -189,6 +177,9 @@ if __name__ == "__main__":
 
     model, inputs = get_model(args)
     print(f"shape: {inputs[0].shape}")
+
+    a = input()
+    print(a)
 
     fn = partial(run_model, args, model, inputs)
 

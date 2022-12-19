@@ -257,7 +257,7 @@ def tensor_is_on_xla(tensors):
     return any(map(lambda x: x.device.type == "xla", tensors))
 
 
-def timed(model, model_iter_fn, example_inputs, times=1, return_result=False):
+def timed(model, model_iter_fn, optimizer, example_inputs, times=1, return_result=False):
     synchronize()
     if tensor_is_on_xla(example_inputs):
         import torch_xla.core.xla_model as xm
@@ -268,7 +268,7 @@ def timed(model, model_iter_fn, example_inputs, times=1, return_result=False):
     t0 = time.perf_counter()
     # Dont collect outputs to correctly measure timing
     for _ in range(times):
-        result = model_iter_fn(model, example_inputs, collect_outputs=False)
+        result = model_iter_fn(model, optimizer, example_inputs, collect_outputs=False)
         if tensor_is_on_xla(result):
             # If the model is on XLA device, it's possible that after running
             # the model, the computation is accumulated but not performed yet.

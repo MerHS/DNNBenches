@@ -4,6 +4,7 @@ import torch.optim as optim
 import torch.fx as fx
 from utils import print_aot
 from functorch.compile import aot_function
+import torch._dynamo as dynamo
 from torch.distributed.pipeline.sync import Pipe
 
 import os
@@ -130,8 +131,60 @@ def main3():
     # traced.print_readable()
     # print(str(traced.graph))
 
+def main4():
+    class Lin7(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.mod1 = \
+                nn.Sequential(
+                    nn.Linear(50, 50), nn.ReLU(),
+                    nn.Linear(50, 50), nn.ReLU(),
+                    nn.Linear(50, 50), nn.ReLU(),
+                    nn.Linear(50, 50), 
+                )
+            
+        def forward(self, x):
+            x = self.mod1(x)
+            return x
+    
+    mod1 = Lin7().to('cuda:0')
+    mod2 = Lin7().to('cuda:1')
+
+    mod1_comp = dynamo.optimize('inductor')(mod1).to('cuda:0')
+    mod2_comp = dynamo.optimize('inductor')(mod2).to('cuda:1')
+    
+    class PipeModule(nn.Module):
+        def __init__(self, mod1, mod2):
+            super().__init__()
+            self.mod1 = mod1
+            self.mod2 = mod2
+
+        def forward(self, x):
+            x = x.to("cuda:0")
+            x = self.mod1(x)
+            x = x.to("cuda:1")
+            x = self.mod2(x) # Throws an Error!
+            return x
+    
+    model = PipeModule(mod1_comp, mod2_comp)
+
+    opt = optim.Adam(model.parameters(), lr=1)
+
+    opt.zero_grad()
+    test_input = torch.rand(20, 50).to('cuda:0')
+    test_target = torch.rand(20, 50).to('cuda:1')
+    test_output = model(test_input)
+
+    crit = nn.L1Loss()
+    loss = crit(test_target, test_output)
+    loss.backward()
+    opt.step()
+
+    print(loss.shape, loss.device)
+    print(list(model.mod1.parameters()))
+
 if __name__ == '__main__':
-    main3()
+    main4()
 
 # opt.zero_grad()
 

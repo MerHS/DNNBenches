@@ -79,10 +79,13 @@ class ToyModel(nn.Module):
         return self.net(x)
 
 
-def model_iter_fn(model, example_inputs, collect_outputs=False):
+def model_iter_fn(model, optimizer, example_inputs, collect_outputs=False):
     outputs = model(*example_inputs)
     loss = reduce_to_scalar_loss(outputs)
+
+    optimizer.zero_grad()
     loss.backward()
+    optimizer.step()
     if collect_outputs:
         return outputs
 

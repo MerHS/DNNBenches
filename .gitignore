@@ -132,3 +132,4 @@ test-clm/
 data
 
 *.trace.json
+models/logs

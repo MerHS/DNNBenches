@@ -18,5 +18,5 @@ dot = g.get_dot_graph()
 
 
 
-with open("resnet.svg", "wb") as f:
+with open("resnet50.svg", "wb") as f:
     f.write(dot.create_svg())
