@@ -44,7 +44,7 @@ from transformers import (
 )
 from transformers.utils import send_example_telemetry
 
-from utils import print_aot, print_graph
+from fx_utils import print_aot, print_graph
 
 MODEL_CONFIG_CLASSES = list(MODEL_MAPPING.keys())
 MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)

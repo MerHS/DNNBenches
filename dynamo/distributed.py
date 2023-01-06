@@ -121,9 +121,9 @@ def run_model(args, model, inputs, key):
     model.train()
 
     # warmup
-    _ = timed(model, model_iter_fn, optimizer, inputs, times=3, return_result=False)
+    _ = timed(model, optimizer, model_iter_fn, inputs, times=3, return_result=False)
     t_total = timed(
-        model, model_iter_fn, optimizer, inputs, times=args.repeat, return_result=False
+        model, optimizer, model_iter_fn, inputs, times=args.repeat, return_result=False
     )
     if args.torchviz:
         torchviz_model(args, model, inputs, rank)

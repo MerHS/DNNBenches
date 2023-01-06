@@ -88,6 +88,27 @@ def model_iter_fn(model, optimizer, example_inputs, collect_outputs=False):
     optimizer.step()
     if collect_outputs:
         return outputs
+        
+def model_pipe_fn(model, optimizer, example_inputs, collect_outputs=False):
+    for t in example_inputs:
+        assert torch.is_tensor(t)
+        assert t.shape[0] > 1
+
+    optimizer.zero_grad()
+    
+    input_1 = [t[:t.shape[0]//2, ...] for t in example_inputs]
+    input_2 = [t[t.shape[0]//2:, ...] for t in example_inputs]
+
+    output_1 = model(*input_1)
+    loss_1 = reduce_to_scalar_loss(output_1)
+    
+    output_2 = model(*input_2)
+    loss_2 = reduce_to_scalar_loss(output_2)
+
+    loss_2.backward()
+    loss_1.backward()
+    
+    optimizer.step()
 
 
 def get_model(args):

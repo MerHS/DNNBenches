@@ -7,7 +7,7 @@ import torch.optim as optim
 
 from functorch.compile import aot_function
 from graph_drawer import FxGraphDrawer
-from utils import print_aot
+from fx_utils import print_aot
 
 transform = transforms.Compose(
     [transforms.ToTensor(),

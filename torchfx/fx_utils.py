@@ -1,4 +1,8 @@
 from typing import Any
+import os
+import sys
+import importlib
+from os.path import abspath, exists
 
 import torch
 import torch._dynamo as dynamo
@@ -8,6 +12,42 @@ from graph_drawer import FxGraphDrawer
 
 import torch.fx as fx
 from torch.fx.node import Node, _get_qualified_name
+
+def setup_torchbench_cwd():
+    original_dir = abspath(os.getcwd())
+
+    os.environ["KALDI_ROOT"] = "/tmp"  # avoids some spam
+    for torchbench_dir in (
+        "./torchbenchmark",
+        "../torchbenchmark",
+        "../torchbench",
+        "../benchmark",
+        "../../torchbenchmark",
+        "../../torchbench",
+        "../../benchmark",
+    ):
+        if exists(torchbench_dir):
+            break
+
+    if exists(torchbench_dir):
+        torchbench_dir = abspath(torchbench_dir)
+        os.chdir(torchbench_dir)
+        sys.path.append(torchbench_dir)
+
+    return original_dir
+
+def get_model(model_name, device, batch_size):
+    setup_torchbench_cwd()
+    module = importlib.import_module(
+        f"torchbenchmark.models.{model_name}"
+    )
+    benchmark_cls = getattr(module, "Model", None)
+    bm = benchmark_cls(
+        test="train", device=device, jit=False, batch_size=batch_size
+    )
+    model, inputs = bm.get_module()
+
+    return model, inputs
 
 def args_str(args, newline=True):
     sep = ',\n' if newline else ', '

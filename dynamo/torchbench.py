@@ -280,12 +280,7 @@ class TorchBenchmarkRunner(BenchmarkRunner):
                 batch_size=batch_size,
                 extra_args=extra_args,
             )
-        if dynamic_shapes:
-            if not hasattr(benchmark, "get_dynamic_shapes_module"):
-                raise NotImplementedError("Dynamic Shapes not supported")
-            model, example_inputs = benchmark.get_dynamic_shapes_module()
-        else:
-            model, example_inputs = benchmark.get_module()
+        model, example_inputs = benchmark.get_module()
 
         # Models that must be in train mode while training
         if is_training and (not use_eval_mode or model_name in ONLY_TRAINING_MODE):
@@ -294,8 +289,6 @@ class TorchBenchmarkRunner(BenchmarkRunner):
             model.eval()
         gc.collect()
         batch_size = benchmark.batch_size
-
-        self.init_optimizer(device, model.parameters())
 
         # Torchbench has quite different setup for yolov3, so directly passing
         # the right example_inputs
@@ -356,7 +349,7 @@ class TorchBenchmarkRunner(BenchmarkRunner):
 
     def forward_and_backward_pass(self, mod, inputs, collect_outputs=True):
         cloned_inputs = clone_inputs(inputs)
-        self.optimizer_zero_grad()
+        self.optimizer_zero_grad(mod)
         with self.autocast():
             pred = mod(*cloned_inputs)
             loss = self.compute_loss(pred)
